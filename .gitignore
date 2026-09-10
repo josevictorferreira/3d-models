@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Generated models
+out/
+*.stl
+*.step
+
+# Nix / direnv
+.direnv/
+result
+
+# Tooling state
+.omc/state/
+.omc
