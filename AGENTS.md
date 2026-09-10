@@ -27,7 +27,8 @@ build outputs and are never committed.
   geometry calls. Print-related allowances (clearances, tolerances) are named as such.
 - Reusable dimensions (screw clearances, heat-set inserts, rack unit maths) go in
   `cadlib/hardware.py`, not copied between projects.
-- Part files stay headless: never import `ocp_vscode` in them. Use `cad show` to view.
+- Part files stay headless: never import `ocp_vscode` in them. Use `cad preview` (browser) or
+  `cad show` (ocp-vscode) to view.
 - Output path mirrors source path: `projects/a/b/c.py` -> `out/a/b/c.stl`.
 - build123d 0.11 API notes: `part.is_valid` and `part.volume` are properties, not methods.
 - Style: `ruff check .` and `ruff format .` clean, line length 100.
