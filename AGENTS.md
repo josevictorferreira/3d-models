@@ -11,6 +11,9 @@ build outputs and are never committed.
 
 - Always work inside `nix develop` (or direnv). Never `pip install`; deps live in
   `pyproject.toml` / `uv.lock`. Add with `uv add <pkg>` (or `uv add --dev`) and commit the lock.
+- Run every command from the repo root. The shell hook activates `.venv` for the current
+  directory; `cd elsewhere && nix develop /path --command python ...` gets a Python without
+  numpy or build123d. Write scratch outputs elsewhere, but `cd` here first.
 - Host is NixOS. If an import fails with a missing `.so`, add the library to `nativeLibs` in
   `flake.nix`. Never add fontconfig or freetype there: the OCP wheel bundles its own.
 - Python 3.13. build123d 0.11 pins the `cadquery-ocp-novtk` 7.9 wheels; do not add VTK.
@@ -43,6 +46,11 @@ nix flake check       # after touching flake.nix
 
 A change to a part is done when its STL builds, tests pass, and the printed bounding box and
 volume are sane for the physical object. Report the actual output, not "should work".
+
+When changing a shared helper (`_tray.py` and the like), record `repr(part.volume)` of every
+part that uses it before the change and compare after: equal to ~1e-5 mm3 means the geometry
+is untouched, anything larger is a real change and must be intended and reported. A parameter
+no existing part exercises (e.g. `units=2` was) is untested code; probe it before relying on it.
 
 ## Do not
 

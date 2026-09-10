@@ -7,10 +7,17 @@ bands, and a lip each side of the faceplate opening that stops the device 2 mm b
 The device drops in from the open side, slides forward against the lip, and the hooks keep it
 from sliding back out.
 
+Several devices can share one tray: `multi_tray([Bay(...), Bay(...)])` puts them side by side,
+each in a bay of its own depth with its own hooks, the bays sharing a wall. A bay can be closed
+at the front (the device hides behind solid panel) and can swap its hooks for a low end wall
+that a cable passes over.
+
 Axes follow the NUC STL: X across the rack, Y up the rack unit, Z into the rack with the panel
 front at Z = 0. Print panel face down, no supports.
 """
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from math import sqrt
 
 from build123d import (
@@ -38,6 +45,7 @@ from cadlib.hardware import (
     RACK10_EAR_HOLE_INSET,
     RACK10_PANEL_WIDTH,
     RACK_EAR_HOLE_OFFSET,
+    RACK_UNIT,
     rack_height,
 )
 
@@ -70,10 +78,27 @@ HEX_FLAT = 14.42  # flat to flat
 HEX_WEB = 4
 VENT_END_MARGIN = 16  # from the panel back and from the rear edge
 
-# Wall windows: elongated hexagon with 45 degree tips, centred on the cavity.
-WINDOW_HEIGHT = 13
-WINDOW_SIDE_MARGIN = 4  # wall left above and below the window on a short cavity
+# Wall windows: elongated hexagon with 45 degree tips, low on the wall next to the plate so a
+# side-mounted power or HDMI plug can pass through it.
+WINDOW_HEIGHT = 15
+WINDOW_SIDE_MARGIN = 4  # wall left between the window and the plate, and above it if short
 WINDOW_END_MARGIN = 14
+
+
+@dataclass(frozen=True)
+class Bay:
+    """One compartment of a tray: the outside measurements of the device it holds, in mm.
+
+    `front` opens the faceplate so the device shows through the bezel; without it the device
+    sits behind solid panel. `rear_wall` swaps the rear hooks for a plain end wall that tall
+    (measured from the plate), leaving the rear open above it for a cable into the device.
+    """
+
+    width: float
+    depth: float
+    height: float
+    front: bool = True
+    rear_wall: float | None = None
 
 
 def slab(sketch: Sketch, y0: float, y1: float) -> Part:
@@ -81,10 +106,16 @@ def slab(sketch: Sketch, y0: float, y1: float) -> Part:
     return Pos(0, y0, 0) * extrude(Plane.XZ * sketch, amount=-(y1 - y0))
 
 
-def rear_rounded(width: float, z0: float, z1: float, radius: float) -> Sketch:
-    """Plan rectangle from z0 to z1 with its two rear corners rounded."""
-    rect = Pos(0, (z0 + z1) / 2) * Rectangle(width, z1 - z0)
-    return fillet(rect.vertices().group_by(Axis.Y)[-1], radius)
+def plan_rect(
+    x0: float, x1: float, z0: float, z1: float, r_left: float = 0, r_right: float = 0
+) -> Sketch:
+    """Plan rectangle with its rear (max Z) corners rounded by the given radii, 0 for square."""
+    rect = Pos((x0 + x1) / 2, (z0 + z1) / 2) * Rectangle(x1 - x0, z1 - z0)
+    if r_left > 0:
+        rect = fillet(rect.vertices().group_by(Axis.Y)[-1].sort_by(Axis.X)[:1], r_left)
+    if r_right > 0:
+        rect = fillet(rect.vertices().group_by(Axis.Y)[-1].sort_by(Axis.X)[-1:], r_right)
+    return rect
 
 
 def wall_root_fill(x_wall: float) -> Sketch:
@@ -106,13 +137,13 @@ def gusset(x_wall: float, run: float) -> Sketch:
     return make_face(Line(corner, foot) + ThreePointArc(foot, mid, top) + Line(top, corner))
 
 
-def vents(zone_width: float, z0: float, z1: float) -> Sketch | None:
+def vents(x_mid: float, zone_width: float, z0: float, z1: float) -> Sketch | None:
     """Honeycomb: rows that fit fully between z0 and z1, columns clipped to the zone width."""
     hex_radius = HEX_FLAT / sqrt(3)
     pitch = HEX_FLAT + HEX_WEB
     row_pitch = pitch * sqrt(3) / 2
     rows = int((z1 - z0 - 2 * hex_radius) // row_pitch) + 1
-    if rows < 1:
+    if rows < 1 or zone_width < HEX_FLAT:
         return None
     z_first = (z0 + z1) / 2 - (rows - 1) * row_pitch / 2
     cells = []
@@ -126,15 +157,15 @@ def vents(zone_width: float, z0: float, z1: float) -> Sketch | None:
                     Pos(x, z_first + row * row_pitch) * RegularPolygon(hex_radius, 6, rotation=30)
                 )
     zone = Pos(0, (z0 + z1) / 2) * Rectangle(zone_width, z1 - z0)
-    return (Sketch() + cells) & zone
+    return Pos(x_mid, 0) * ((Sketch() + cells) & zone)
 
 
-def wall_windows(tray_width: float, y0: float, y1: float, z0: float, z1: float) -> Part | None:
-    """One cutter through both walls: a stretched hexagon in the Y-Z plane."""
+def wall_window(x0: float, x1: float, y0: float, y1: float, z0: float, z1: float) -> Part | None:
+    """Cutter through one wall spanning x0..x1: a stretched hexagon in the Y-Z plane."""
     height = min(WINDOW_HEIGHT, y1 - y0 - 2 * WINDOW_SIDE_MARGIN)
     if height < 4 or z1 - z0 <= height:
         return None
-    y_mid, half = (y0 + y1) / 2, height / 2
+    y_mid, half = y1 - WINDOW_SIDE_MARGIN - height / 2, height / 2
     outline = Polygon(
         (y_mid - half, z0 + half),
         (y_mid, z0),
@@ -144,24 +175,28 @@ def wall_windows(tray_width: float, y0: float, y1: float, z0: float, z1: float) 
         (y_mid - half, z1 - half),
         align=None,
     )
-    return Pos(-tray_width / 2 - 1, 0, 0) * extrude(Plane.YZ * outline, tray_width + 2)
+    return Pos(x0 - 1, 0, 0) * extrude(Plane.YZ * outline, x1 - x0 + 2)
 
 
-def tray(width: float, depth: float, height: float, units: int = 1) -> Part:
-    """Rackmount for a device measuring `width` x `depth` x `height` mm (outside, with feet)."""
-    cavity_width = width + 2 * FIT_CLEARANCE
-    cavity_height = height + 2 * FIT_CLEARANCE
-    cavity_depth = depth + 2 * FIT_CLEARANCE
+def multi_tray(bays: Sequence[Bay], units: int = 1) -> Part:
+    """Rackmount with one bay per device, laid side by side from -X to +X.
+
+    The walls are as tall as the tallest front-facing device. A device in a closed-front bay
+    may stand taller and show above the walls, which is how a drive on edge gets pulled out.
+    """
     panel_height = rack_height(units)
-    tray_width = cavity_width + 2 * WALL_THICKNESS
-    hook_face = BEZEL_THICKNESS + cavity_depth  # Z of the inside of the rear hooks
-    tray_end = hook_face + WALL_THICKNESS
     plate_top = panel_height - PLATE_INSET
     plate_bottom = plate_top - PLATE_THICKNESS
+    cavity_height = max(bay.height for bay in bays if bay.front) + 2 * FIT_CLEARANCE
     cavity_bottom = plate_bottom - cavity_height
     if cavity_bottom < MIN_RIM:
-        raise ValueError(f"{height} mm tall device does not fit in {units}U; try units={units + 1}")
+        raise ValueError(
+            f"{cavity_height} mm cavity does not fit in {units}U; try units={units + 1}"
+        )
     rim_bottom = max(0, cavity_bottom - RIM_THICKNESS)
+    widths = [bay.width + 2 * FIT_CLEARANCE for bay in bays]
+    tray_width = sum(widths) + (len(bays) + 1) * WALL_THICKNESS
+    x_walls = (-tray_width / 2, tray_width / 2)
     ear_zone = RACK10_EAR_HOLE_INSET + EAR_SLOT_LENGTH / 2 + 2
     gusset_run = min(GUSSET_RUN, PANEL_WIDTH / 2 - ear_zone - tray_width / 2)
 
@@ -172,55 +207,102 @@ def tray(width: float, depth: float, height: float, units: int = 1) -> Part:
     ear_slots = [
         Pos(
             sx * (PANEL_WIDTH / 2 - RACK10_EAR_HOLE_INSET),
-            panel_height / 2 + sy * RACK_EAR_HOLE_OFFSET,
+            panel_height / 2 + (u - (units - 1) / 2) * RACK_UNIT + sy * RACK_EAR_HOLE_OFFSET,
         )
         * SlotOverall(EAR_SLOT_LENGTH, EAR_SLOT_HEIGHT)
         for sx in (-1, 1)
+        for u in range(units)
         for sy in (-1, 1)
     ]
     panel -= extrude(Sketch() + ear_slots, PANEL_THICKNESS)
-    panel -= Pos(0, cavity_bottom, 0) * Box(
-        cavity_width - 2 * OPENING_LIP,
-        cavity_height,
-        PANEL_THICKNESS,
-        align=(Align.CENTER, Align.MIN, Align.MIN),
-    )
 
-    x_walls = (-tray_width / 2, tray_width / 2)
-    outline = rear_rounded(tray_width, PANEL_THICKNESS, tray_end, REAR_CORNER_RADIUS)
-    body = slab(outline + [wall_root_fill(x) for x in x_walls], rim_bottom, plate_top)
+    body = Part() + [slab(wall_root_fill(x), rim_bottom, plate_top) for x in x_walls]
     if gusset_run >= MIN_GUSSET_RUN:
         braces = Sketch() + [gusset(x, gusset_run) for x in x_walls]
         body += slab(braces, rim_bottom, cavity_bottom) + slab(braces, plate_bottom, plate_top)
 
-    # Cavity: everything but the plate, open at the rear between the hooks.
-    cavity = rear_rounded(
-        cavity_width, PANEL_THICKNESS, hook_face, REAR_CORNER_RADIUS - WALL_THICKNESS
-    ) + Pos(0, tray_end) * Rectangle(tray_width - 2 * REAR_CORNER_RADIUS, 2 * WALL_THICKNESS + 2)
-    body -= slab(cavity, rim_bottom - 1, plate_bottom)
-    grille = vents(
-        cavity_width - 2 * OPENING_LIP,
-        PANEL_THICKNESS + VENT_END_MARGIN,
-        tray_end - VENT_END_MARGIN,
-    )
-    if grille is not None:
-        body -= slab(grille, plate_bottom - 1, plate_top + 1)
-    windows = wall_windows(
-        tray_width,
-        cavity_bottom,
-        plate_bottom,
-        PANEL_THICKNESS + WINDOW_END_MARGIN,
-        hook_face - WINDOW_END_MARGIN,
-    )
-    if windows is not None:
-        body -= windows
+    # Bay geometry along Z: device front, inside face of the rear stop, outside of the tray.
+    fronts = [BEZEL_THICKNESS if bay.front else PANEL_THICKNESS for bay in bays]
+    hook_faces = [z + bay.depth + 2 * FIT_CLEARANCE for z, bay in zip(fronts, bays)]
+    ends = [z + WALL_THICKNESS for z in hook_faces]
+    rebates = []
+    x0 = x_walls[0] + WALL_THICKNESS
+    for i, (bay, width) in enumerate(zip(bays, widths)):
+        x1 = x0 + width
+        x_mid = (x0 + x1) / 2
+        z_front, hook_face, end = fronts[i], hook_faces[i], ends[i]
+        outer = (x0 - WALL_THICKNESS, x1 + WALL_THICKNESS)
+        # Rear corners are rounded where they are exposed: at the tray's sides, and against
+        # a shallower neighbour. Against a deeper neighbour the wall simply carries on. An end
+        # wall keeps a uniform thickness round its square inside corners, so its radius is one
+        # wall.
+        radius = WALL_THICKNESS if bay.rear_wall is not None else REAR_CORNER_RADIUS
+        r_left = radius if i == 0 or ends[i - 1] < end else 0
+        r_right = radius if i == len(bays) - 1 or ends[i + 1] < end else 0
+        if bay.rear_wall is None:
+            body += slab(
+                plan_rect(*outer, PANEL_THICKNESS, end, r_left, r_right), rim_bottom, plate_top
+            )
+            inner = REAR_CORNER_RADIUS - WALL_THICKNESS
+            cavity = plan_rect(x0, x1, z_front, hook_face, inner, inner)
+            if width > 2 * inner:  # open at the rear between the hooks
+                cavity += plan_rect(x0 + inner, x1 - inner, hook_face - 1, end + 1)
+            body -= slab(cavity, rim_bottom - 1, plate_bottom)
+        else:
+            wall_top = plate_bottom - bay.rear_wall
+            body += slab(
+                plan_rect(*outer, PANEL_THICKNESS, end, r_left, r_right), wall_top, plate_top
+            )
+            body += slab(plan_rect(*outer, PANEL_THICKNESS, hook_face), rim_bottom, wall_top)
+            body -= slab(plan_rect(x0, x1, z_front, hook_face), rim_bottom - 1, plate_bottom)
+        grille = vents(
+            x_mid,
+            width - 2 * OPENING_LIP,
+            PANEL_THICKNESS + VENT_END_MARGIN,
+            end - VENT_END_MARGIN,
+        )
+        if grille is not None:
+            body -= slab(grille, plate_bottom - 1, plate_top + 1)
+        if bay.front:
+            opening_height = bay.height + 2 * FIT_CLEARANCE
+            panel -= Pos(x_mid, plate_bottom - opening_height, 0) * Box(
+                width - 2 * OPENING_LIP,
+                opening_height,
+                PANEL_THICKNESS,
+                align=(Align.CENTER, Align.MIN, Align.MIN),
+            )
+            # Rebate behind the lips so the device front reaches the bezel, not the panel back.
+            rebates.append(
+                Pos(x_mid, plate_bottom - opening_height, BEZEL_THICKNESS)
+                * Box(
+                    width,
+                    opening_height,
+                    PANEL_THICKNESS - BEZEL_THICKNESS,
+                    align=(Align.CENTER, Align.MIN, Align.MIN),
+                )
+            )
+        x0 = x1 + WALL_THICKNESS
+
+    for x_wall, hook_face in ((x_walls[0], hook_faces[0]), (x_walls[1], hook_faces[-1])):
+        wall_x = sorted(
+            (x_wall, x_wall - WALL_THICKNESS if x_wall > 0 else x_wall + WALL_THICKNESS)
+        )
+        window = wall_window(
+            *wall_x,
+            cavity_bottom,
+            plate_bottom,
+            PANEL_THICKNESS + WINDOW_END_MARGIN,
+            hook_face - WINDOW_END_MARGIN,
+        )
+        if window is not None:
+            body -= window
 
     part = panel + body
-    # Rebate behind the lips so the device front reaches the bezel, not the panel back.
-    part -= Pos(0, cavity_bottom, BEZEL_THICKNESS) * Box(
-        cavity_width,
-        cavity_height,
-        PANEL_THICKNESS - BEZEL_THICKNESS,
-        align=(Align.CENTER, Align.MIN, Align.MIN),
-    )
+    for rebate in rebates:
+        part -= rebate
     return part
+
+
+def tray(width: float, depth: float, height: float, units: int = 1) -> Part:
+    """Rackmount for a device measuring `width` x `depth` x `height` mm (outside, with feet)."""
+    return multi_tray([Bay(width, depth, height)], units)

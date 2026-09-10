@@ -10,6 +10,7 @@ from. All dimensions in mm.
 3. Limits and how the tray degrades
 4. The reference: Intel NUC7i3BNK 10-inch rackmount (measured)
 5. Axes and print orientation
+6. Several devices in one tray
 
 ## 1. Adding a device
 
@@ -37,8 +38,10 @@ minus 6 mm lips on each side. It drops in from the open side and slides forward.
 
 Scales: cavity (device + clearance), tray width, tray depth, panel opening, honeycomb zone
 (cavity inset 6 each side, 16 from panel back and rear edge; rows only where a full hex fits),
-wall window length (cavity depth minus 14 each end) and height (13, or less on a short cavity),
-gusset run (44.6, shortened so it clears the ear slots, dropped below 10).
+wall window length (cavity depth minus 14 each end) and height (15, or less on a short cavity;
+its lower edge always 4 above the plate, so side-mounted plugs pass through it), gusset run
+(44.6, shortened so it clears the ear slots, dropped below 10). For `units=2` the ears get
+two slots per U, each pair at +-15.875 from that U's centreline.
 
 Fixed style: panel 254 x rack_height(units) x 4 with R5 corners, ear slots 13 x 6.5 centred
 8.75 in from the edge and +-15.875 from mid-height, 4.35 walls, 4 plate set 0.5 below the
@@ -98,3 +101,40 @@ beside each wall; probes showed it was a rendering artifact.
 The NUC STL is stored in print orientation: panel flat, tray growing in +Z. `_tray.py` uses
 the same frame with the panel front at Z=0, so the slicer needs no rotation beyond "place on
 face". Print panel face down; the hooks are at the top and nothing overhangs.
+
+## 6. Several devices in one tray
+
+`multi_tray([Bay(width, depth, height), ...], units)` lays the bays out from -X to +X (left to
+right seen from the front), each with its own depth and rear hooks, sharing a 4.35 wall with its
+neighbour. The rear is stepped: an exposed rear corner (tray side, or against a shallower
+neighbour) gets the R10.25 curl; against a deeper neighbour the wall carries on past the hook.
+Wall height comes from the tallest `front=True` bay. Vents, panel opening and rebate are per
+bay; windows are cut only in the two outer walls. Options per bay:
+
+- `front=False`: no panel opening or rebate, the device sits against the panel back at Z = 4.
+- `rear_wall=h`: no hooks; a plain end wall `h` tall from the plate closes the bay, and the bay
+  is open at the rear above it so a plug can reach the device. The end wall's outer corners are
+  R4.35 so it stays one wall thick round its square inside. A device in such a bay may stand
+  taller than the walls (it does not set the wall height), which is how it gets lifted out.
+
+Design notes learned on the first multi-bay tray:
+
+- A rear stop at a bay's own depth is the same R10.25 curl the tray end has, just attached to a
+  wall that continues past it; against a deeper neighbour skip the outer rounding, or a
+  1.9 mm sliver is left where the arc meets the continuing wall. This is why each bay can be
+  its own depth with a stepped rear instead of a second set of hooks.
+- A closed end wall with square inside corners thins to 1.9 mm at the corners if given the
+  R10.25 outer radius; radius = wall thickness keeps it uniform.
+- A drive on edge is retained by a 10 mm slot and an end wall about a third of its height; the
+  rest of the rear stays open for the plug, and the drive should stand a few mm above the
+  walls or it cannot be gripped. The bay's `height` is the drive's real height, and only
+  `front=True` bays set the wall height.
+- Wall height is one number for the whole tray; a shorter front device just gets a taller lip
+  above its opening. Panel openings are per device height, rebates likewise.
+- `fillet` on a sketch vertex list: after filleting one corner, re-select vertices before the
+  next; `group_by(Axis.Y)[-1].sort_by(Axis.X)[:1]` picks the left rear corner, `[-1:]` the right.
+
+`projects/homelab-rack/rackmounts/pi_hd_nuc.py` is the worked example: Pi bay 67 wide x 97 deep,
+a 10 x 111 slot for a 9 mm drive on edge with a 20 mm end wall, NUC bay 89 x 89; tray 183.4
+wide, 119.35 deep, 2U. `pytest` and the `tray()` wrapper guard the single-bay geometry: the
+refactor to bays reproduced the NUC and switch trays to within 1e-5 mm3.

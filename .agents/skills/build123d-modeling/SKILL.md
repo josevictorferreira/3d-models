@@ -29,8 +29,23 @@ Read `AGENTS.md` first for the repo conventions; this skill adds what those rule
 3. Build in plan-view sketches extruded between named heights, not by stacking boxes. Booleans
    in this order: solid outer body, subtract cavities, subtract patterns (vents, windows),
    then union the panel and cut anything that crosses both.
-4. Verify (below). A part is done when it builds, `pytest -q` passes, and bounding box and
+   Printability follows from this: with the panel face down, anything extruded along the
+   print axis from the panel or a wall is fine, and so is a feature that grows sideways off a
+   wall as an arc (the hooks do). A feature spanning a cavity at mid depth (a rear stop bar, a
+   shelf) is an unsupported overhang unless it bridges a short gap between two walls; make it
+   a curl attached to a wall instead, or a wall-to-wall bridge of ~10 mm.
+4. Know the device's port layout before laying out bays: a side-mounted plug needs that side
+   on an outer wall with the window in reach, and a plug at the rear needs the rear open at
+   that height. The Raspberry Pi 4 has USB/Ethernet on one short end and power/HDMI on the
+   adjacent long side, so no orientation puts all its ports front or back.
+5. Verify (below). A part is done when it builds, `pytest -q` passes, and bounding box and
    volume are sane for the physical object. Report the printed numbers, not "should work".
+
+If the code's constants and comments disagree with the measured reference in
+[references/rackmount-tray.md](references/rackmount-tray.md), the measurement wins: the window
+was coded centred and 13 tall while the reference has it 4 above the plate and 15 tall, and the
+2U ear slots were never checked against rack holes. Read the reference before trusting a helper
+on a path no existing part uses.
 
 ## build123d algebra mode: verified behaviour
 
@@ -82,8 +97,16 @@ change it. Worked example and the resulting geometry: [references/rackmount-tray
   stacks) with `part.intersect(Line(...))`, in a throwaway script that imports the part module
   from `projects/...` (add its directory to `sys.path` so `_helper` imports work).
 - Render section images of `out/.../part.stl` with `stl_inspect.py slice` and read them.
-- `nix run .#preview <part>` for a look in the browser; a screenshot of the page through the
-  chrome-devtools tools is enough to confirm it renders when the user cannot look.
+  The renderer is a parity count of mesh crossings along the slice axis, so never zoom by
+  filtering triangles: a cropped mesh is not watertight and paints false holes. Zoom by
+  translating the whole mesh so the region of interest starts at 0, or raise `res`. It also
+  shows thin false gaps and diagonals at grazing faces (a solid panel looked 1 px thick in an
+  X slice); anything surprising in an image gets a `probe` before it is believed.
+- For a picture the user can look at: write the preview with `cadlib.preview.write_preview`,
+  open the `file://` HTML with `mcp__chrome-devtools__new_page`, aim the camera with
+  `evaluate_script` (`camera.position.set(...); controls.target.set(...); controls.update();
+  renderer.render(scene, camera)`; the page's top-level consts are reachable), then
+  `take_screenshot` to a file and `SendUserFile` it. `cad preview` itself calls `xdg-open`.
 - Before claiming done: `ruff format`, `ruff check`, `pytest -q`, and the `cad build` numbers
   in the final message.
 
