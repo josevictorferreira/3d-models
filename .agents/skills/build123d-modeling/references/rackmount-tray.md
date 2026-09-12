@@ -59,6 +59,7 @@ rebate behind it.
 | width > ~215 | tray wider than the ear slots allow; not supported, use a plain panel |
 | cavity height < 12 | wall windows omitted |
 | depth < ~50 | fewer or no honeycomb rows |
+| vent zone < ~30 wide | most cells clipped away; a 36 mm bay keeps 4 plate hexes |
 
 The NUC original had 1 mm vent slots low on the walls and a keystone variant. Neither is in
 `_tray.py`; a 27 mm cavity has no room for the slots next to the window.
@@ -112,6 +113,18 @@ Wall height comes from the tallest `front=True` bay. Vents, panel opening and re
 bay; windows are cut only in the two outer walls. Options per bay:
 
 - `front=False`: no panel opening or rebate, the device sits against the panel back at Z = 4.
+- `open_top=True` (a `multi_tray`/`tray` argument, not per bay): walls run to the panel's top
+  edge, no rim band and only the plate-band gussets; a front bay taller than the unit gets a
+  notch through the panel's top edge instead of an error. Use it when a 47 mm device must live
+  on a 1U panel and the unit above is free. Preferred over 2U for short walls: on a 2U panel
+  the rim-band gussets float mid-panel and read as a second floor.
+- `wall_vents=True` (also a `multi_tray`/`tray` argument): every wall, inner ones included, is
+  cut with the plate's honeycomb instead of the single elongated-hexagon cable window. Same
+  lattice as the plate (14.42 flat-to-flat, 4 webs) stood up in the Y-Z plane, so the two
+  patterns line up along the rack's depth; margins are the window's (4 from the plate and the
+  cavity bottom, 14 from the panel back). Each wall is cut only as deep as its *shallower*
+  neighbour, so it never reaches into that bay's rear corner and hook. Use it when the device
+  vents through a face that ends up against a wall, which is what standing one on edge does.
 - `rear_wall=h`: no hooks; a plain end wall `h` tall from the plate closes the bay, and the bay
   is open at the rear above it so a plug can reach the device. The end wall's outer corners are
   R4.35 so it stays one wall thick round its square inside. A device in such a bay may stand
@@ -134,7 +147,13 @@ Design notes learned on the first multi-bay tray:
 - `fillet` on a sketch vertex list: after filleting one corner, re-select vertices before the
   next; `group_by(Axis.Y)[-1].sort_by(Axis.X)[:1]` picks the left rear corner, `[-1:]` the right.
 
+A cell that the zone clips to less than `MIN_VENT_CELL` (2) is dropped rather than left as a
+sliver. Without this a narrow zone produced unprintable slots: 0.79 mm in a 24 mm bay zone,
+0.4 mm in the Haiz switch's 189 mm one (four of them, 54.76 mm3 - the only geometry change the
+fix made to an existing part).
+
 `projects/homelab-rack/rackmounts/pi_hd_nuc.py` is the worked example: Pi bay 67 wide x 97 deep,
 a 10 x 111 slot for a 9 mm drive on edge with a 20 mm end wall, NUC bay 89 x 89; tray 183.4
-wide, 119.35 deep, 2U. `pytest` and the `tray()` wrapper guard the single-bay geometry: the
+wide, 119.35 deep, 1U open-top (the NUC stands 8 mm above the panel, the drive 19 mm above the
+slot walls). `pytest` and the `tray()` wrapper guard the single-bay geometry: the
 refactor to bays reproduced the NUC and switch trays to within 1e-5 mm3.

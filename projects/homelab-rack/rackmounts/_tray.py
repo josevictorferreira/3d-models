@@ -77,6 +77,7 @@ MIN_GUSSET_RUN = 10
 HEX_FLAT = 14.42  # flat to flat
 HEX_WEB = 4
 VENT_END_MARGIN = 16  # from the panel back and from the rear edge
+MIN_VENT_CELL = 2  # a cell clipped narrower than this is dropped, not left as a sliver
 
 # Wall windows: elongated hexagon with 45 degree tips, low on the wall next to the plate so a
 # side-mounted power or HDMI plug can pass through it.
@@ -152,7 +153,7 @@ def vents(x_mid: float, zone_width: float, z0: float, z1: float) -> Sketch | Non
         columns = int((zone_width / 2 + HEX_FLAT / 2 - x_offset) // pitch)
         for col in range(-columns - 1, columns + 1):
             x = x_offset + col * pitch
-            if abs(x) - HEX_FLAT / 2 < zone_width / 2:
+            if abs(x) - HEX_FLAT / 2 < zone_width / 2 - MIN_VENT_CELL:
                 cells.append(
                     Pos(x, z_first + row * row_pitch) * RegularPolygon(hex_radius, 6, rotation=30)
                 )
@@ -178,22 +179,47 @@ def wall_window(x0: float, x1: float, y0: float, y1: float, z0: float, z1: float
     return Pos(x0 - 1, 0, 0) * extrude(Plane.YZ * outline, x1 - x0 + 2)
 
 
-def multi_tray(bays: Sequence[Bay], units: int = 1) -> Part:
+def wall_honeycomb(x0: float, x1: float, y0: float, y1: float, z0: float, z1: float) -> Part | None:
+    """Cutter through one wall spanning x0..x1: the plate's honeycomb, stood up in the Y-Z plane.
+
+    Same lattice as `vents`, so the holes in the walls and in the plate read as one pattern and
+    line up along the rack's depth. Rows run up the wall, clipped to y0..y1.
+    """
+    grille = vents((y0 + y1) / 2, y1 - y0, z0, z1)
+    if grille is None:
+        return None
+    return Pos(x0 - 1, 0, 0) * extrude(Plane.YZ * grille, x1 - x0 + 2)
+
+
+def multi_tray(
+    bays: Sequence[Bay], units: int = 1, open_top: bool = False, wall_vents: bool = False
+) -> Part:
     """Rackmount with one bay per device, laid side by side from -X to +X.
 
-    The walls are as tall as the tallest front-facing device. A device in a closed-front bay
-    may stand taller and show above the walls, which is how a drive on edge gets pulled out.
+    The walls are as tall as the tallest front-facing device, with a rim band above. A device
+    in a closed-front bay may stand taller and show above the walls, which is how a drive on
+    edge gets pulled out.
+
+    `open_top` instead runs the walls to the panel's top edge with no rim band, and any device
+    taller than the unit simply stands out of the tray (its panel opening becomes a notch in
+    the top edge). Needs the unit above to be free where the devices are.
+
+    `wall_vents` replaces the single cable window with honeycomb through every wall, inner walls
+    included, for a device that breathes through the face it presents to a wall.
     """
     panel_height = rack_height(units)
     plate_top = panel_height - PLATE_INSET
     plate_bottom = plate_top - PLATE_THICKNESS
-    cavity_height = max(bay.height for bay in bays if bay.front) + 2 * FIT_CLEARANCE
-    cavity_bottom = plate_bottom - cavity_height
-    if cavity_bottom < MIN_RIM:
-        raise ValueError(
-            f"{cavity_height} mm cavity does not fit in {units}U; try units={units + 1}"
-        )
-    rim_bottom = max(0, cavity_bottom - RIM_THICKNESS)
+    if open_top:
+        cavity_bottom = rim_bottom = 0
+    else:
+        cavity_height = max(bay.height for bay in bays if bay.front) + 2 * FIT_CLEARANCE
+        cavity_bottom = plate_bottom - cavity_height
+        if cavity_bottom < MIN_RIM:
+            raise ValueError(
+                f"{cavity_height} mm cavity does not fit in {units}U; try units={units + 1}"
+            )
+        rim_bottom = max(0, cavity_bottom - RIM_THICKNESS)
     widths = [bay.width + 2 * FIT_CLEARANCE for bay in bays]
     tray_width = sum(widths) + (len(bays) + 1) * WALL_THICKNESS
     x_walls = (-tray_width / 2, tray_width / 2)
@@ -219,7 +245,9 @@ def multi_tray(bays: Sequence[Bay], units: int = 1) -> Part:
     body = Part() + [slab(wall_root_fill(x), rim_bottom, plate_top) for x in x_walls]
     if gusset_run >= MIN_GUSSET_RUN:
         braces = Sketch() + [gusset(x, gusset_run) for x in x_walls]
-        body += slab(braces, rim_bottom, cavity_bottom) + slab(braces, plate_bottom, plate_top)
+        body += slab(braces, plate_bottom, plate_top)
+        if cavity_bottom > rim_bottom:  # the rim band, absent on an open-top tray
+            body += slab(braces, rim_bottom, cavity_bottom)
 
     # Bay geometry along Z: device front, inside face of the rear stop, outside of the tray.
     fronts = [BEZEL_THICKNESS if bay.front else PANEL_THICKNESS for bay in bays]
@@ -283,19 +311,38 @@ def multi_tray(bays: Sequence[Bay], units: int = 1) -> Part:
             )
         x0 = x1 + WALL_THICKNESS
 
-    for x_wall, hook_face in ((x_walls[0], hook_faces[0]), (x_walls[1], hook_faces[-1])):
-        wall_x = sorted(
-            (x_wall, x_wall - WALL_THICKNESS if x_wall > 0 else x_wall + WALL_THICKNESS)
-        )
-        window = wall_window(
-            *wall_x,
-            cavity_bottom,
-            plate_bottom,
-            PANEL_THICKNESS + WINDOW_END_MARGIN,
-            hook_face - WINDOW_END_MARGIN,
-        )
-        if window is not None:
-            body -= window
+    if wall_vents:
+        # Every wall, the shared inner ones too. A wall is cut only as deep as its shallower
+        # neighbour, so the cut never reaches into that bay's rear corner and hook.
+        x = x_walls[0]
+        for j in range(len(bays) + 1):
+            reach = min(hook_faces[max(j - 1, 0)], hook_faces[min(j, len(bays) - 1)])
+            grille = wall_honeycomb(
+                x,
+                x + WALL_THICKNESS,
+                cavity_bottom,
+                plate_bottom,
+                PANEL_THICKNESS + WINDOW_END_MARGIN,
+                reach - WINDOW_END_MARGIN,
+            )
+            if grille is not None:
+                body -= grille
+            if j < len(bays):
+                x += WALL_THICKNESS + widths[j]
+    else:
+        for x_wall, hook_face in ((x_walls[0], hook_faces[0]), (x_walls[1], hook_faces[-1])):
+            wall_x = sorted(
+                (x_wall, x_wall - WALL_THICKNESS if x_wall > 0 else x_wall + WALL_THICKNESS)
+            )
+            window = wall_window(
+                *wall_x,
+                cavity_bottom,
+                plate_bottom,
+                PANEL_THICKNESS + WINDOW_END_MARGIN,
+                hook_face - WINDOW_END_MARGIN,
+            )
+            if window is not None:
+                body -= window
 
     part = panel + body
     for rebate in rebates:
@@ -303,6 +350,13 @@ def multi_tray(bays: Sequence[Bay], units: int = 1) -> Part:
     return part
 
 
-def tray(width: float, depth: float, height: float, units: int = 1) -> Part:
+def tray(
+    width: float,
+    depth: float,
+    height: float,
+    units: int = 1,
+    open_top: bool = False,
+    wall_vents: bool = False,
+) -> Part:
     """Rackmount for a device measuring `width` x `depth` x `height` mm (outside, with feet)."""
-    return multi_tray([Bay(width, depth, height)], units)
+    return multi_tray([Bay(width, depth, height)], units, open_top, wall_vents)
