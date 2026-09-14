@@ -68,6 +68,7 @@ MIN_RIM = 2  # the rim shrinks to fit a tall device, but not below this
 PLATE_INSET = 0.5  # plate face set back from the panel edge so it never rubs the next unit
 REAR_CORNER_RADIUS = 10.25  # outer radius; the walls follow it round to form the hooks
 WALL_ROOT_FILLET = 8  # between the wall outer face and the panel back
+EAR_CLEARANCE = 1  # gap kept between that fillet and the ear slots, so the panel meets the rail
 GUSSET_RUN = 44.6  # along the panel back, shortened if the ear slots are in the way
 GUSSET_RISE = 33.9  # along the wall
 GUSSET_SAGITTA = 3.3  # the brace edge bows this far in towards the corner
@@ -119,9 +120,8 @@ def plan_rect(
     return rect
 
 
-def wall_root_fill(x_wall: float) -> Sketch:
+def wall_root_fill(x_wall: float, r: float = WALL_ROOT_FILLET) -> Sketch:
     """Concave fillet material in the corner between a wall's outer face and the panel back."""
-    r = WALL_ROOT_FILLET
     side = 1 if x_wall > 0 else -1
     square = Pos(x_wall + side * r / 2, PANEL_THICKNESS + r / 2) * Rectangle(r, r)
     return square - Pos(x_wall + side * r, PANEL_THICKNESS + r) * Circle(r)
@@ -225,6 +225,10 @@ def multi_tray(
     x_walls = (-tray_width / 2, tray_width / 2)
     ear_zone = RACK10_EAR_HOLE_INSET + EAR_SLOT_LENGTH / 2 + 2
     gusset_run = min(GUSSET_RUN, PANEL_WIDTH / 2 - ear_zone - tray_width / 2)
+    # A wide tray's root fillet would otherwise reach behind the ear slots and hold the panel
+    # off the rack rail. Shrink it to whatever is left, and drop it if nothing is.
+    slot_inner = PANEL_WIDTH / 2 - RACK10_EAR_HOLE_INSET - EAR_SLOT_LENGTH / 2
+    root_fillet = min(WALL_ROOT_FILLET, slot_inner - EAR_CLEARANCE - tray_width / 2)
 
     panel = Box(
         PANEL_WIDTH, panel_height, PANEL_THICKNESS, align=(Align.CENTER, Align.MIN, Align.MIN)
@@ -242,7 +246,9 @@ def multi_tray(
     ]
     panel -= extrude(Sketch() + ear_slots, PANEL_THICKNESS)
 
-    body = Part() + [slab(wall_root_fill(x), rim_bottom, plate_top) for x in x_walls]
+    body = Part()
+    if root_fillet > 0:
+        body += [slab(wall_root_fill(x, root_fillet), rim_bottom, plate_top) for x in x_walls]
     if gusset_run >= MIN_GUSSET_RUN:
         braces = Sketch() + [gusset(x, gusset_run) for x in x_walls]
         body += slab(braces, plate_bottom, plate_top)

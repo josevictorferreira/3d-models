@@ -34,9 +34,14 @@ included, for a device that breathes through the face it presents to a wall.
 - `rackmounts/network_switch.py`: 100 x 100 x 26 mm network switch.
 - `rackmounts/network_switch_haiz.py`: 1U open-top, 200 x 121 x 46 mm Haiz network switch.
 - `rackmounts/intel_nuc.py`: NUC7i3BNK, regenerated as a check against the reference STL.
+- `rackmounts/intel_nuc_normal.py`: 1U shelf for the full-size Intel NUC (133 x 131 x 48 mm).
+  Not a `_tray` tray: vented plate, a 3 mm retaining lip instead of walls, and a faceplate
+  solid but for the front port window. The NUC stands 8.85 mm above the panel.
 - `rackmounts/intel_nuc_x3.py`: 3U, three NUC7i3BNK standing on edge side by side,
   honeycombed walls so each one's bottom-panel intake breathes.
 - `rackmounts/nuc_x3_pi.py`: 3U, the same three NUCs on edge plus a Raspberry Pi 4B on edge
   beside them; 164.75 mm wide, stepped rear, honeycombed walls.
+- `rackmounts/nuc_x3_pi_t9.py`: 3U, everything in one row: three NUCs, a Pi 4B and a NUC T9,
+  all on edge. 217.1 mm wide, the widest this tray goes; no gussets and a 2.2 mm root fillet.
 - `rackmounts/pi_hd_nuc.py`: 1U open-top, three bays: Raspberry Pi 4B in its case, a portable
   USB drive standing on edge in a slot, Intel NUC T9 (stands 8 mm above the panel).

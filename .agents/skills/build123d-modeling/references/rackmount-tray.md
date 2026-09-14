@@ -56,7 +56,10 @@ rebate behind it.
 |---|---|
 | height > ~34 (1U) | `ValueError`; pass `units=2` |
 | width > ~123 | gussets shortened; below a 10 run they are omitted |
-| width > ~215 | tray wider than the ear slots allow; not supported, use a plain panel |
+| width > ~199.5 | gusset run under 10; gussets omitted |
+| width > ~207.5 | root fillet clamped so it stops `EAR_CLEARANCE` (1) short of the ear slots |
+| width > ~221.5 | clamp leaves no fillet at all; the walls meet the panel square |
+| width > ~223.5 | walls themselves reach the ear slots; not supported, use a plain panel |
 | cavity height < 12 | wall windows omitted |
 | depth < ~50 | fewer or no honeycomb rows |
 | vent zone < ~30 wide | most cells clipped away; a 36 mm bay keeps 4 plate hexes |
@@ -81,7 +84,12 @@ relative to the mesh minimum corner, X width, Y height, Z depth, panel front at 
   0.55 inside the U edge. Rim band Y 0..4 is walls + gussets only, open over the cavity.
 - Rear corners: outer arc R10.25 centred (75.38, 106.79); inner R5.9 concentric; hook end face
   at X 75.38, Z 112.69..117.04. Rear plate edge Z 117.04 between the hooks only.
-- Wall-to-panel fillet R8 on the outer side, full height.
+- Wall-to-panel fillet R8 on the outer side, full height. Its widest point is at the panel back
+  (Z=4) and it tapers inward from there, so what has to clear the ear slots is `tray_width / 2 +
+  the radius`. `multi_tray` shrinks the radius to keep that 1 mm short of the slots; without the
+  clamp a tray over ~207.5 wide stands proud of the panel back where the rail bolts on and will
+  not sit flat. (`network_switch_haiz.py` builds its own body at 209.7 wide and keeps the full
+  R8: it protrudes 0.076 mm over a 1.1 mm band, under one layer, so it mounts fine.)
 - Gussets on Y 0..4 and 39.95..43.95: from (20.5, 4) on the panel back to (65.13, 37.9) on the
   wall, free edge an arc of R121 (centre (-28.58, 114.84)), sagitta 3.3 towards the corner.
 - Honeycomb: hexes 14.42 flat-to-flat, flats parallel to Z, webs 4 (centre pitch 18.42, row
